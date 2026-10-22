@@ -3,11 +3,16 @@
 .cursor/
 **/.venv/**
 **/checkpoints/**
+# bare form: checkpoints may be a symlink to NFS storage (dir-only "x/" won't match)
+checkpoints
 train_out/
-checkpoints/
 runs/
 Log/
 logs/
+
+# Pi_05 local run artifacts
+policy/Pi_05/*.log
+policy/Pi_05/training_status.txt
 
 # H_RDT local artifacts and large model assets
 policy/H_RDT/.cache/
