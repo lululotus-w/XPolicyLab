@@ -20,7 +20,12 @@ protocol_override="${14:-}"
 source "${UTILS_DIR}/resolve_eval_env_type.sh"
 eval_env_mode="$(resolve_eval_env_type)" || exit 1
 
-read eval_batch yaml_protocol < <(python - <<PY
+_YAML_PY="python"
+if ! "${_YAML_PY}" -c "import yaml" 2>/dev/null; then
+    _CB="$(conda info --base 2>/dev/null)"
+    [[ -n "${_CB}" ]] && _YAML_PY="${_CB}/bin/python"
+fi
+read eval_batch yaml_protocol < <("${_YAML_PY}" - <<PY
 import yaml
 with open("${yaml_file}", "r") as f:
     data = yaml.safe_load(f)
@@ -30,6 +35,9 @@ print(
 )
 PY
 )
+# EVAL_BATCH_OVERRIDE switches to data-collection mode (false) or batch eval (true)
+# at call time without editing deploy.yml.
+eval_batch="${EVAL_BATCH_OVERRIDE:-${eval_batch}}"
 protocol="${protocol_override:-${yaml_protocol}}"
 
 if [[ -z "${EVAL_ENV_TYPE:-}" ]]; then

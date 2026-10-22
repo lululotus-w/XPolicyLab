@@ -12,10 +12,19 @@ policy_gpu_id=$7
 env_gpu_id=$8
 policy_uv_env=${9:-uv}
 eval_env_conda_env=${10}
+scene_seed=${11:-$seed}   # 场景集编号，默认与 checkpoint seed 相同（向后兼容）
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # Current Dir
 XPL_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 UTILS_DIR="${XPL_ROOT}/utils"
+
+# Machine-specific knobs (caches, offline flags, NFS lock shims, collection-mode
+# switches like EVAL_BATCH_OVERRIDE / POLICY_CHECKPOINT_NUM). Sourced here so both
+# the policy server and the sim client inherit the same environment.
+if [[ -f "${SCRIPT_DIR}/env_local.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/env_local.sh" eval
+fi
 
 SERVER_SCRIPT="${SCRIPT_DIR}/setup_eval_policy_server.sh"
 CLIENT_SCRIPT="${SCRIPT_DIR}/setup_eval_env_client.sh"
@@ -52,6 +61,9 @@ SERVER_PID=$!
 bash "${UTILS_DIR}/wait_for_policy_server.sh" "${policy_server_ip}" "${policy_server_port}" "${SERVER_PID}" "Policy server" 1200
 
 echo "[MAIN] start client, server=${policy_server_ip}:${policy_server_port}"
+
+# 设置场景集环境变量（与 checkpoint seed 解耦）
+export ROBODOJO_SCENE_SEED=$scene_seed
 
 bash "${CLIENT_SCRIPT}" \
     "${bench_name}" \

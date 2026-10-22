@@ -77,6 +77,7 @@ exec env \
     PYTHONWARNINGS=ignore::UserWarning \
     PYTHONPATH="$(IFS=:; echo "${PYTHONPATH_PARTS[*]}")" \
     CUDA_VISIBLE_DEVICES="${policy_gpu_id}" \
+    OPENPI_DATA_HOME="${OPENPI_DATA_HOME:-/home/weihonglian/openpi_data_local}" \
     "${PYTHON_BIN}" "${XPL_ROOT}/setup_policy_server.py" \
         --config_path "${yaml_file}" \
         --overrides \
@@ -89,4 +90,5 @@ exec env \
             seed="${seed}" \
             policy_name="${policy_name}" \
             action_type="${action_type}" \
-            action_dim="${action_dim}"
+            action_dim="${action_dim}" \
+            ${POLICY_CHECKPOINT_NUM:+checkpoint_num=${POLICY_CHECKPOINT_NUM}}

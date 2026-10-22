@@ -12,10 +12,10 @@ from tqdm import tqdm
 
 from XPolicyLab.utils.load_file import load_yaml, load_json
 
-from lerobot.common.datasets.lerobot_dataset import HF_LEROBOT_HOME
-from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
+from lerobot.utils.constants import HF_LEROBOT_HOME
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-ROOT_PATH = Path(__file__).parent.parent.parent.parent.parent
+ROOT_PATH = Path(__file__).parent.parent.parent.parent.parent.parent
 
 CAMERA_ALIASES = {
     "cam_head": "cam_high",
@@ -117,11 +117,11 @@ def _make_action_from_state(state: np.ndarray) -> np.ndarray:
 def load_data(ep_path) -> dict[str, Any]:
     with h5py.File(ep_path, "r") as ep:
         right_state = np.concatenate(
-            [ep["state/right_arm_joint_states"][:], ep["state/right_ee_joint_states"][:][:, None]],
+            [ep["state/right_arm_joint_states"][:], ep["state/right_ee_joint_states"][:]],
             axis=1,
         )
         left_state = np.concatenate(
-            [ep["state/left_arm_joint_states"][:], ep["state/left_ee_joint_states"][:][:, None]],
+            [ep["state/left_arm_joint_states"][:], ep["state/left_ee_joint_states"][:]],
             axis=1,
         )
         state = np.concatenate([left_state, right_state], axis=1).astype(np.float32)
