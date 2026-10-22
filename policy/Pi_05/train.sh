@@ -22,29 +22,74 @@ lerobot_repo_id="${OPENPI_LEROBOT_REPO_ID:-${bench_name}-${ckpt_name}-${env_cfg_
 gpu_count=$(awk -F',' '{print NF}' <<<"${gpu_id}")
 fsdp_devices="${OPENPI_FSDP_DEVICES:-$(( gpu_count < 2 ? 1 : 2 ))}"
 
+# Machine-specific knobs (caches on NFS, offline flags, lock shims, batch size,
+# dataset workers) live in env_local.sh next to this script. train.sh itself stays
+# generic: every knob below is an OPENPI_* env var, and sourcing env_local.sh is
+# just how this machine fills them in. Values exported before calling train.sh win.
+if [[ -f "${POLICY_DIR}/env_local.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "${POLICY_DIR}/env_local.sh" train
+fi
+
 mkdir -p "${ckpt_dir}"
 export CUDA_VISIBLE_DEVICES="${gpu_id}"
 
-# LeRobot loads parquet via HuggingFace datasets, which builds pyarrow mmap cache
-# under HF_DATASETS_CACHE. Keep dataset on shared storage, but use per-host local
-# cache to avoid NFS lock contention when multiple nodes train concurrently.
+# JAX compilation cache always stays local for performance.
 LOCAL_CACHE_ROOT="${OPENPI_LOCAL_CACHE_ROOT:-/tmp/openpi-cache-$(hostname)}"
-mkdir -p "${LOCAL_CACHE_ROOT}/hf/datasets" "${LOCAL_CACHE_ROOT}/jax"
-export HF_DATASETS_CACHE="${LOCAL_CACHE_ROOT}/hf/datasets"
+mkdir -p "${LOCAL_CACHE_ROOT}/jax"
 export JAX_COMPILATION_CACHE_DIR="${LOCAL_CACHE_ROOT}/jax"
+
+# HuggingFace datasets cache: local disk by default (upstream behavior). Set
+# OPENPI_HF_HOME to place HF_HOME/HF_DATASETS_CACHE elsewhere (e.g. NFS) when the
+# local disk is too small for the pyarrow mmap cache.
+if [[ -n "${OPENPI_HF_HOME:-}" ]]; then
+  mkdir -p "${OPENPI_HF_HOME}/datasets"
+  export HF_HOME="${OPENPI_HF_HOME}"
+  export HF_DATASETS_CACHE="${OPENPI_HF_HOME}/datasets"
+fi
+
+# Where openpi looks for downloaded checkpoints/assets (maybe_download reuses it).
+[[ -n "${OPENPI_DATA_HOME:-}" ]] && export OPENPI_DATA_HOME
+
+# Offline flags (HF_HUB_OFFLINE / HF_DATASETS_OFFLINE / TRANSFORMERS_OFFLINE),
+# lock shims (PYTHONPATH sitecustomize + LD_PRELOAD) and the venv runner are all
+# taken from the environment as-is; see env_local.sh for why this machine sets them.
 
 echo "[Pi_05] train_config_name=${train_config_name}"
 echo "[Pi_05] lerobot_repo_id=${lerobot_repo_id}"
 echo "[Pi_05] fsdp_devices=${fsdp_devices}"
 echo "[Pi_05] local_cache_root=${LOCAL_CACHE_ROOT}"
+echo "[Pi_05] hf_datasets_cache=${HF_DATASETS_CACHE:-<default>}"
+echo "[Pi_05] hf_lerobot_home=${HF_LEROBOT_HOME:-<default>}"
+echo "[Pi_05] offline=HUB:${HF_HUB_OFFLINE:-0} DATASETS:${HF_DATASETS_OFFLINE:-0}"
+echo "[Pi_05] ld_preload=${LD_PRELOAD:-<none>}"
 echo "[Pi_05] checkpoint_dir=${ckpt_dir}"
 
 cd "${POLICY_DIR}/openpi/"
+
+# Runner: `uv run` (upstream default), or a synced venv python directly when
+# OPENPI_VENV_PYTHON is set (uv's own NFS cache can deadlock on a broken lockd).
+if [[ -n "${OPENPI_VENV_PYTHON:-}" ]]; then
+  runner=("${OPENPI_VENV_PYTHON}")
+else
+  runner=(uv run)
+fi
+
+# Optional CLI overrides, injected only when the corresponding env var is set
+# (unset = use the value baked into the TrainConfig in config.py).
+extra_args=()
+[[ -n "${OPENPI_WEIGHT_PATH:-}" ]] && extra_args+=(--weight-loader.params-path="${OPENPI_WEIGHT_PATH}")
+[[ -n "${OPENPI_NUM_WORKERS:-}" ]] && extra_args+=(--num-workers="${OPENPI_NUM_WORKERS}")
+[[ -n "${OPENPI_BATCH_SIZE:-}" ]] && extra_args+=(--batch-size="${OPENPI_BATCH_SIZE}")
+[[ -n "${OPENPI_ASSETS_DIR:-}" ]] && extra_args+=(--data.assets.assets-dir="${OPENPI_ASSETS_DIR}")
+[[ -n "${OPENPI_ASSET_ID:-}" ]] && extra_args+=(--data.assets.asset-id="${OPENPI_ASSET_ID}")
+
 XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}" \
-  uv run scripts/train.py "${train_config_name}" \
+  "${runner[@]}" scripts/train.py "${train_config_name}" \
     --exp-name="${ckpt_setting}" \
     --data.repo-id="${lerobot_repo_id}" \
     --fsdp-devices="${fsdp_devices}" \
     --checkpoint-dir-override="${ckpt_dir}" \
     --seed="${seed}" \
+    "${extra_args[@]}" \
     --overwrite

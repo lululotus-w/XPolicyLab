@@ -22,6 +22,7 @@ import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
 import openpi.policies.wuji_policy as wuji_policy
 import openpi.shared.download as _download
+import openpi.shared.nnx_utils as nnx_utils
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
 import openpi.training.misc.polaris_config as polaris_config
@@ -666,6 +667,111 @@ _CONFIGS = [
         batch_size=256,
         fsdp_devices=2,
         num_train_steps=60000,
+    ),
+    TrainConfig(
+        # Conservative finetune on the 98 collected classify_objects episodes (Plan A, 2026-09).
+        # Rationale (see Pi_05/retrain_plan.md): the first full finetune (60k steps @ 2.5e-5,
+        # everything trainable) catastrophically forgot the base policy's skills. Here we cut
+        # the total update budget ~100x and freeze the SigLIP vision tower ("img" params) --
+        # the new data adds no perception information, only task-level behavior.
+        # batch_size=16 (not 32) because this run targets 2x L20 GPUs (8/GPU, same per-GPU
+        # load as the 4-GPU bs32 run); 6000 steps at bs16 = ~1.2 epochs, matching the plan.
+        name="pi05_classify_ckpt0_conservative_freeze_vision",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LeRobotAlohaDataConfig(
+            repo_id="RoboDojo-classify_objects_ckpt0-arx_x5-joint",
+            assets=AssetsConfig(
+                assets_dir="/mnt/nfs01/whl/Pi_05_checkpoint/RoboDojo-sim-arx_x5-joint-0/59999/assets",
+                asset_id="arx_x5_sim",
+            ),
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,  # Set to True for prompt by task_name
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        # Freeze the SigLIP vision encoder (paths like PaliGemma/img/...). LLM + action expert
+        # remain fully trainable.
+        freeze_filter=nnx_utils.PathRegex(".*img.*"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=100,
+            peak_lr=2.5e-6,
+            decay_steps=6000,
+            decay_lr=2.5e-7,
+        ),
+        seed=0,
+        batch_size=16,
+        fsdp_devices=1,  # overridden via --fsdp-devices from train.sh
+        num_train_steps=6000,
+        save_interval=500,
+        keep_period=500,  # keep every checkpoint for the post-hoc dose-response eval sweep
+    ),
+    TrainConfig(
+        # Finetune on 52 scripted-expert stack_blocks episodes (seed0 scenes, 14,696 frames),
+        # collected by lilinglong's script (formal_p0/p1 LeRobot exports, merged+adapted by
+        # /home/weihonglian/scripts/merge_stackblocks_lerobot.py: 16-dim EE state rebuilt to
+        # 14-dim joint state, task string fixed to the official instruction).
+        # Protocol: seed0 = train (inverted vs classify line), seed2 = dev (ckpt selection),
+        # seed1 = test. Prompt: "Stack the three blocks with different textures."
+        # cam_top -> cam_high remap because the export names the head camera cam_top.
+        # 5000 steps @ bs16 = ~5.4 epochs of the 14,696-frame dataset.
+        name="pi05_stackblocks_ckpt0_conservative_freeze_vision",
+        model=pi0_config.Pi0Config(pi05=True),
+        data=LeRobotAlohaDataConfig(
+            repo_id="RoboDojo-stack_blocks_ckpt0-arx_x5-joint",
+            assets=AssetsConfig(
+                assets_dir="/mnt/nfs01/whl/Pi_05_checkpoint/RoboDojo-sim-arx_x5-joint-0/59999/assets",
+                asset_id="arx_x5_sim",
+            ),
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_top",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,  # Set to True for prompt by task_name
+            ),
+        ),
+        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        freeze_filter=nnx_utils.PathRegex(".*img.*"),
+        lr_schedule=_optimizer.CosineDecaySchedule(
+            warmup_steps=100,
+            peak_lr=2.5e-6,
+            decay_steps=5000,
+            decay_lr=2.5e-7,
+        ),
+        seed=0,
+        batch_size=16,
+        fsdp_devices=1,  # overridden via --fsdp-devices from train.sh
+        num_train_steps=5000,
+        save_interval=500,
+        keep_period=500,
     ),
     TrainConfig(
         name="pi05_base_aloha_full_sim_arx-x5_seed_1",
