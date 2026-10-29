@@ -16,7 +16,14 @@ gpu_id=$6
 POLICY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # ckpt_setting is the run directory name; pass it verbatim as ckpt_name to eval.sh.
 ckpt_setting="${bench_name}-${ckpt_name}-${env_cfg_type}-${action_type}-${seed}"
-ckpt_dir="${POLICY_DIR}/checkpoints/${ckpt_setting}"
+# Nest task-finetune runs under checkpoints/<task>/ (e.g. stack_blocks_ckpt0 →
+# checkpoints/stack_blocks/<run_dir>); runs without the _ckpt<tag> suffix
+# (e.g. base "sim" training) keep the legacy flat layout.
+case "${ckpt_name}" in
+  *_ckpt*) ckpt_subdir="${ckpt_name%%_ckpt*}/${ckpt_setting}" ;;
+  *)       ckpt_subdir="${ckpt_setting}" ;;
+esac
+ckpt_dir="${POLICY_DIR}/checkpoints/${ckpt_subdir}"
 train_config_name="${OPENPI_TRAIN_CONFIG_NAME:-pi05_base_aloha_full_sim_arx-x5_seed_0}"
 lerobot_repo_id="${OPENPI_LEROBOT_REPO_ID:-${bench_name}-${ckpt_name}-${env_cfg_type}-${action_type}}"
 gpu_count=$(awk -F',' '{print NF}' <<<"${gpu_id}")
@@ -84,6 +91,15 @@ extra_args=()
 [[ -n "${OPENPI_ASSETS_DIR:-}" ]] && extra_args+=(--data.assets.assets-dir="${OPENPI_ASSETS_DIR}")
 [[ -n "${OPENPI_ASSET_ID:-}" ]] && extra_args+=(--data.assets.asset-id="${OPENPI_ASSET_ID}")
 
+# openpi requires --overwrite to reuse a checkpoint dir on a fresh run, but forbids
+# combining it with --resume. OPENPI_RESUME=1 continues from the latest checkpoint
+# in the dir (restores params + optimizer state; data stream restarts from the top).
+if [[ -n "${OPENPI_RESUME:-}" ]]; then
+  extra_args+=(--resume)
+else
+  extra_args+=(--overwrite)
+fi
+
 XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}" \
   "${runner[@]}" scripts/train.py "${train_config_name}" \
     --exp-name="${ckpt_setting}" \
@@ -91,5 +107,4 @@ XLA_PYTHON_CLIENT_MEM_FRACTION="${XLA_PYTHON_CLIENT_MEM_FRACTION:-0.9}" \
     --fsdp-devices="${fsdp_devices}" \
     --checkpoint-dir-override="${ckpt_dir}" \
     --seed="${seed}" \
-    "${extra_args[@]}" \
-    --overwrite
+    "${extra_args[@]}"

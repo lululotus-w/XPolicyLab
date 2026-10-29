@@ -722,14 +722,13 @@ _CONFIGS = [
         keep_period=500,  # keep every checkpoint for the post-hoc dose-response eval sweep
     ),
     TrainConfig(
-        # Finetune on 52 scripted-expert stack_blocks episodes (seed0 scenes, 14,696 frames),
-        # collected by lilinglong's script (formal_p0/p1 LeRobot exports, merged+adapted by
-        # /home/weihonglian/scripts/merge_stackblocks_lerobot.py: 16-dim EE state rebuilt to
-        # 14-dim joint state, task string fixed to the official instruction).
-        # Protocol: seed0 = train (inverted vs classify line), seed2 = dev (ckpt selection),
-        # seed1 = test. Prompt: "Stack the three blocks with different textures."
-        # cam_top -> cam_high remap because the export names the head camera cam_top.
-        # 5000 steps @ bs16 = ~5.4 epochs of the 14,696-frame dataset.
+        # Finetune on 120 self-collected stack_blocks episodes (seed1 = scene1, 36,778 frames):
+        # base joint-0 policy rollouts on the 55 predefined layouts (flywheel self-distillation),
+        # collected via RoboDojo scripts/collect_episodes.sh, converted via scripts/convert_nfs.sh
+        # (QC via scripts/screen_quality.py: 120/120 pass, no fake-success suspicion).
+        # Protocol: seed1 = train, seed2 = dev (ckpt selection), seed0 = test.
+        # Prompt: "Stack the three blocks with different textures."
+        # 5000 steps @ bs16 = ~2.2 epochs of the 36,778-frame dataset.
         name="pi05_stackblocks_ckpt0_conservative_freeze_vision",
         model=pi0_config.Pi0Config(pi05=True),
         data=LeRobotAlohaDataConfig(
@@ -743,7 +742,7 @@ _CONFIGS = [
                     _transforms.RepackTransform(
                         {
                             "images": {
-                                "cam_high": "observation.images.cam_top",
+                                "cam_high": "observation.images.cam_high",
                                 "cam_left_wrist": "observation.images.cam_left_wrist",
                                 "cam_right_wrist": "observation.images.cam_right_wrist",
                             },
@@ -758,7 +757,12 @@ _CONFIGS = [
                 prompt_from_task=True,  # Set to True for prompt by task_name
             ),
         ),
-        weight_loader=weight_loaders.CheckpointWeightLoader("gs://openpi-assets/checkpoints/pi05_base/params"),
+        # Init from joint-0, NOT pi05_base: self-distillation must start from the base
+        # policy that produced the rollouts. Path valid on any box mounting /mnt/nfs01;
+        # OPENPI_WEIGHT_PATH (train.sh --weight-loader.params-path) still overrides.
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "/mnt/nfs01/whl/Pi_05_checkpoint/RoboDojo-sim-arx_x5-joint-0/59999/params"
+        ),
         freeze_filter=nnx_utils.PathRegex(".*img.*"),
         lr_schedule=_optimizer.CosineDecaySchedule(
             warmup_steps=100,

@@ -15,7 +15,9 @@ the same way. Resolution precedence (highest first):
 
 Training scripts write to the same concatenated name
 (``{bench_name}-{ckpt_name}-{env_cfg_type}-{action_type}-{seed}``), so eval finds
-the checkpoint without the caller having to know the exact template.
+the checkpoint without the caller having to know the exact template. Task-finetune
+runs may be nested as ``checkpoints/<task>/<run-dir-name>``; the resolver globs
+for that layer transparently.
 
 Adapters with an extra naming layer (e.g. an ``aloha_<name>`` prefix, timestamp
 subdirs, or DeepSpeed nesting) should call :func:`build_run_dir_name` for the
@@ -139,10 +141,16 @@ def candidate_checkpoint_roots(
         run_dir_name = build_run_dir_name(model_cfg, include_seed=include_seed)
         if run_dir_name:
             add(checkpoints_dir / run_dir_name)
+            # 3b. task-nested layout: train.sh saves task-finetune runs under
+            #     checkpoints/<task>/<run_dir_name>; glob so eval stays transparent.
+            for nested in sorted(checkpoints_dir.glob(f"*/{run_dir_name}")):
+                add(nested)
 
         # 4. fallback: checkpoints/<ckpt_name> (verbatim full run-dir name)
         if ckpt_name:
             add(checkpoints_dir / ckpt_name)
+            for nested in sorted(checkpoints_dir.glob(f"*/{ckpt_name}")):
+                add(nested)
 
     return roots
 
