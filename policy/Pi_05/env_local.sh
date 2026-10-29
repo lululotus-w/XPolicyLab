@@ -20,15 +20,12 @@ export OPENPI_DATA_HOME="/mnt/nfs01/whl/home_cache/openpi"
 if [[ "${_env_local_mode}" == "train" || "${_env_local_mode}" == "all" ]]; then
 
   # Dataset images decode on CPU; 8 workers starve the GPUs on this 64-core box.
-  export OPENPI_NUM_WORKERS=32
-  # Old *_seed_* configs default to batch_size=256 / fsdp_devices=2 (4-GPU box);
-  # this box trains on 1-2x L20.
-  export OPENPI_BATCH_SIZE=32
-  export OPENPI_FSDP_DEVICES=1
-  # Old configs point assets at str(_ROBODOJO_ASSETS_DIR); this box loads norm
-  # stats / assets from the public pi05_base bundle instead.
-  export OPENPI_ASSETS_DIR="gs://openpi-assets/checkpoints/pi05_base/assets"
-  export OPENPI_ASSET_ID="arx"
+  export OPENPI_NUM_WORKERS="${OPENPI_NUM_WORKERS:-32}"
+  # FSDP is a machine knob (46G L20s). Batch size / norm-stats assets are recipe
+  # values and belong to the TrainConfig entry in config.py — overriding them
+  # here silently changed experiments (e.g. batch 16 -> 32, joint-0 stats ->
+  # pretrained arx stats). Override per run via the switch section below.
+  export OPENPI_FSDP_DEVICES="${OPENPI_FSDP_DEVICES:-1}"
 
   # `uv run` deadlocks on this cluster: uv's cache sits on NFS and uv takes native
   # advisory locks (not Python filelock) that hang on the broken NFS lockd. Use the
@@ -38,8 +35,9 @@ if [[ "${_env_local_mode}" == "train" || "${_env_local_mode}" == "all" ]]; then
   # HF datasets pyarrow mmap cache goes to NFS (local disk too small); JAX
   # compilation cache stays local (train.sh handles it, faster on local disk).
   export OPENPI_HF_HOME="/mnt/nfs01/whl/home_cache/huggingface"
-  # Converted LeRobot datasets live here.
-  export OPENPI_HF_LEROBOT_HOME="/mnt/nfs01/whl/robodojo_conversion/.cache/huggingface/lerobot"
+  # Converted LeRobot datasets live here. (lerobot reads HF_LEROBOT_HOME directly;
+  # HF_HOME is taken over by train.sh via OPENPI_HF_HOME, so setting HF_HOME has no effect.)
+  export HF_LEROBOT_HOME="/mnt/nfs01/whl/robodojo_conversion/.cache/huggingface/lerobot"
 
   # Offline mode: datasets come from NFS, never touch huggingface.co.
   export HF_HUB_OFFLINE=1
@@ -71,6 +69,9 @@ fi
 # export OPENPI_WEIGHT_PATH=/mnt/nfs01/whl/Pi_05_checkpoint/RoboDojo-sim-arx_x5-joint-0/59999/params
 # export EVAL_BATCH_OVERRIDE=false    # collection mode (deploy.yml default is true)
 # export POLICY_CHECKPOINT_NUM=5999   # override checkpoint_num from deploy.yml
+# export OPENPI_BATCH_SIZE=32         # old *_seed_* configs expected this on this box
+# export OPENPI_ASSETS_DIR="gs://openpi-assets/checkpoints/pi05_base/assets"
+# export OPENPI_ASSET_ID="arx"        # pair with the line above (pi05_base ARX stats)
 # ROBODOJO_SCENE_SEED is set by eval.sh itself (11th positional arg).
 
 unset _env_local_mode
